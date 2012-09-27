@@ -1,0 +1,198 @@
+--- dbmgr_orig.py	2012-09-26 21:07:35.000000000 -0400
++++ dbmgr_ge.py	2012-09-26 21:23:05.652862145 -0400
+@@ -20,6 +20,32 @@
+ # 3) You must NOT use this script if any respective vendors prohibit 
+ #    you from doing so. See all relevant acceptable usage policies. 
+ #--------------------------------------------------------------------
++####################
++# Changelog 09-26-12
++#####################
++#   Glenn P. Edwards Jr
++#     @hiddenillusion
++# http://hiddenillusion.blogspot.com
++# * This is simply a patch to add some additional functionaility to the script, original content belongs to https://code.google.com/p/malwarecookbook/ *
++#
++# - fixed gramatical error w/in process_filenames (resolved in issue #45):
++# - added the option to use the 'find' param within ThreatExpert to grab reports which include what you're seeking;
++#	i.e. - 
++#			"mutex"
++#			"exploit.java"
++#			"exploit.swf"
++#			"wpbt0.dll"
++#			"CVE-2012-0507"
++# - switched the page option to it's own arg
++# - put a while loop in bulkimport() so it will loop through all pages resulted from your search until it gets to a page which contains 'No results found.'
++# - added a silencer for the moment to addtodb() because I came across an instance where different encoding of a filename being processed spit out an error and ended processing as a result
++####################
++# To-Do
++####################
++# - populate registry values/data , right now only keys are parsed
++# - supply name you want the DB to be incase you want seperate ones, (i.e. - one for certain exploits vs. one for mutexes)
++
++
+ import os, sys
+ from sqlite3 import *
+ from avsubmit import ThreatExpert
+@@ -156,18 +182,42 @@
+ 
+ def bulkimport(page):
+     import httplib
+-    conn = httplib.HTTPConnection('www.threatexpert.com')
+-    conn.request('GET', '/reports.aspx?page=%d' % page)
+-    response = conn.getresponse().read()
+-    lines = response.split('\n')
+-    for line in lines:
+-        if line.startswith('<td><a href="report.aspx?md5='):
+-            addtodb( line[29:61] )
++    count = 1
++    while (count <= page):
++        conn = httplib.HTTPConnection('www.threatexpert.com')
++        conn.request('GET', '/reports.aspx?page=%d&sl=1' % count)
++        response = conn.getresponse().read()
++        lines = response.split('\n')
++        for line in lines:
++            if line.startswith('<td><a href="report.aspx?md5='):
++                addtodb( line[29:61] )
++            elif "No records found." in line:
++                print "[+] No further results to process."
++                sys.exit()	
++        count += 1				
++        continue		
+ 
++def findme(page,query):
++    import httplib
++    count = 1
++    while (count <= page):
++        conn = httplib.HTTPConnection('www.threatexpert.com')	
++        conn.request('GET', '/reports.aspx?page=%d&find=%s&sl=1' % (count,query))
++        response = conn.getresponse().read()
++        lines = response.split('\n')
++        for line in lines:
++            if line.startswith('<td><a href="report.aspx?md5='):
++                addtodb( line[29:61] )
++            elif "No records found." in line:
++                print "[+] No further results to process."
++                sys.exit()	
++        count += 1				
++        continue
++		
+ def addtodb(md5):
+ 
+     if not os.path.isfile(DBNAME):
+-        print "DB does not exist, try initializing first..."
++        print "[!] DB does not exist, try initializing first..."
+         return
+ 
+     conn = connect(DBNAME)
+@@ -176,21 +226,21 @@
+     
+     row = curs.fetchone()
+     if row != None:
+-        print "Sample already exists in your DB"
++        print "[-] \"%s\" already exists in DB" % md5
+         return
+ 
+     te = ThreatExpert(md5=md5)
+     data = te.search_by_hash()
+     
+     if data == None:
+-        print "Cannot find file on TE!"
++        print "[!] Cannot find file on ThreatExpert"
+         return
+         
+     curs.execute("INSERT INTO samples (md5) VALUES (?)", (md5,))
+     conn.commit()
+     
+     sid = curs.lastrowid
+-    print "Added sample with ID %d" % sid
++    print "[-] Added sample with ID %d" % sid
+         
+     fs = FileSystem(data)
+     file_info = fs.extract()
+@@ -201,8 +251,13 @@
+                 hash = info['hashes']['MD5'].lower()
+                 if hash.startswith("0x"):
+                     hash = hash[2:]
+-                curs.execute("INSERT INTO files VALUES (NULL,?,?,?)", (sid, file, hash))
+-                print " [FILE] %s %s" % (hash, file)
++                try:
++                    curs.execute("INSERT INTO files VALUES (NULL,?,?,?)", (sid, file, hash))
++                    print " [FILE] %s %s" % (hash, file)
++                # skip over files that result in an encoding error
++                except Exception, msg:
++                    print "[!] %s" % msg
++                    pass
+     
+     bp = BulletParser(data, 'To mark the presence in the system')
+     mutexes = bp.parse()
+@@ -230,7 +285,7 @@
+ def delfromdb(md5):
+     
+     if not os.path.isfile(DBNAME):
+-        print "DB does not exist!"
++        print "[!] DB does not exist"
+         return
+     
+     conn = connect(DBNAME)
+@@ -251,7 +306,7 @@
+ def showdb():
+     
+     if not os.path.isfile(DBNAME):
+-        print "DB does not exist, try initializing first."
++        print "[!] DB does not exist, try initializing first."
+         return
+ 
+     conn = connect(DBNAME)
+@@ -280,14 +335,14 @@
+             for mutant in mutants:
+                 print "       [MUTEX] %s" % (mutant[2])
+     else:
+-        print "Nothing found, try adding samples first."
++        print "[-] Nothing found, try adding samples first."
+ 
+     conn.close()        
+ 
+ def initdb():
+ 
+     if os.path.isfile(DBNAME):
+-        print "File already exists, initialization not required."
++        print "[-] File already exists, initialization not required."
+         return
+ 
+     conn = connect(DBNAME)
+@@ -337,16 +392,24 @@
+                        dest="add", type="string", help="add md5 to DB")
+     parser.add_option("-d", "--del", action="store",
+                        dest="delete", type="string", help="delete md5 from DB")
+-    parser.add_option("-b", "--bulk", action="store",
+-                       dest="page", type="int", help="bulk import page")
++    parser.add_option("-b", "--bulk", action="store_true", dest="bulk", help="Bulk import the latest page(s)")   
++    parser.add_option("-q", "--query", action="store",
++                       dest="query", type="string", help="The term you want to search for within reports (i.e. - mutex)")
++    parser.add_option("-p", "--page", action="store",
++                       dest="page", type="int", default="1", help="The number of pages to parse (default = 1)")
+ 
+     (opts, args) = parser.parse_args()
+     
+-    if opts.init:
++    if opts.query != None and opts.bulk != None:
++        print "[!] Either query or bulk must be selected, not both"
++        parser.print_help()		
++    elif opts.init:
+         initdb()
+     elif opts.show:
+         showdb()
+-    elif opts.page != None:
++    elif opts.query != None:
++        findme(opts.page, opts.query)
++    elif opts.bulk == True:
+         bulkimport(opts.page)
+     elif opts.add != None:
+         if opts.add.startswith("0x"):
+@@ -363,6 +426,3 @@
+ 
+ if __name__ == '__main__':
+     main()
+-
+-
+-    
