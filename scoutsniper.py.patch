@@ -1,0 +1,507 @@
+--- scoutsniper_orig.py	2012-09-26 21:54:55.073010228 -0400
++++ scoutsniper_ge.py	2012-09-26 22:04:44.596999378 -0400
+@@ -3,16 +3,14 @@
+ File: scoutsniper.py
+ Author: Don C. Weber
+ Start Date: 01122009
++Last Mod: 02/14/2009
+ Purpose: Scout Sniper is a wrapper program for ssdeep and the Yara
+          malware identification and classification tool.  Scout Sniper is 
+          designed to run all of the files in a designated directory
+          against either an ssdeep hash of a sample file or a designated 
+          Yara Rule file.
+-         
+-Systems: Scout Sniper has been successfully tested on the following platforms:
+-            Windows XP SP3
+-
+ Copyright 2009 Don C. Weber <cutaway@cutawaysecurity.com>
++Linkage: http://www.cutawaysecurity.com/blog/scout-sniper
+ 
+ License:
+ This work is licensed under the Creative Commons Attribution-Share Alike 3.0 
+@@ -21,41 +19,54 @@
+ Creative Commons, 171 Second Street, Suite 300, San Francisco, California, 
+ 94105, USA.
+ 
+-Last Mod: 02/14/2009
+-Mods:
+-    01/15/09
+-    Created prefs dictionary
+-    02/7/09
+-    Changed name to Scout Sniper 
+-    02/11/09
+-    Added ssdeep functionality
+-    
+-Notes:
+-    
+-
+-To Do:
+-    - Test in Active Directory environment
+-    - Organize and increase output information
+-    - File deletion option
+-    - File copy option
+-    - Search memory option
+-    - Test on multiple windows platforms
+-    - Convert and test on multiple *nix platforms
+-    - Provide SSH authentication method
+-    - Create GUI
+-
+-Resources: 
+-    Yara: http://code.google.com/p/yara-project/
+-    ssDeep: http://docs.activestate.com/activepython/2.5/pywin32/win32file.html
+-    Python 2.5 Documentation: http://docs.activestate.com/activepython/2.5/full_toc.html
+-    Module win32wnet: http://docs.activestate.com/activepython/2.5/pywin32/win32wnet.html
+-    Module win32file: http://docs.activestate.com/activepython/2.5/pywin32/win32file.html
++Original Resources: 
++    Yara 1.5 : http://code.google.com/p/yara-project/
++    ssDeep
++    Python 2.5 
++    Module win32wnet
++    Module win32file
+     Recipe 442521: Windows network file transfers: http://code.activestate.com/recipes/442521/
+-    Dive in Python - Handling command line arguments: 
+-        http://www.faqs.org/docs/diveintopython/kgp_commandline.html
++	
++----------
++Changelog
++08/24/2012
++Glenn P. Edwards Jr.
++  @hiddenillusion
++http://hiddenillusion.blogspot.com
++----------
++1) Changed it to use Python 2.7
++2) Changed it to use YARA v1.6 so had to change how it was matching the YARA rules
++    # Test file against Yara Rules
++    ymatch = prefs['yrule'].match(_ypath)
++2) When it came across an empty file it would spit up errors and exit so I now skip them
++	# skip empty files or it will spit up errors
++    if _os.stat(_path + "\\" + longname)[6]==0:
++        continue
++3) Changed the order of some output
++	- output start time first
++	- output location searching
++	- output the finish time last
++4) Deleted some of the original switches that weren't complete as well as the warning messages so user input wasn't required once executed & instead of using a local YARA rule set by default the only option now is to have it manually defined
++5) If the option to copy the file a YARA hit alerts on already exists in the output directory to copy it to, it will alert on that so you're aware
++6) If there's a hit on a YARA sig it now tells you also what file was responsible as well as the YARA sig which it matched
++7) Added generic exception handling for when a file can't be open/accessed for directory recursiveness & for scanning or else it would through up errors and exit
++8) Added it so you can scan a single file against YARA instead of requiring a directory to scan
++
++Requirements:
++	- To use:
++		- fuzzy.dll from ssdeep needs to be in the same folder as either the scoutsniper.(py|exe) to do the fuzzy hashing
++	- To build:
++		- python 2.7+
++		- py2exe (for whichever version of python you use)
++		- yara python v1.6 (for whichever version of python you use)
++		- a setup.py file containing something similar to:
++			from distutils.core import setup
++			import py2exe
++			setup(console=['scoutsniper.py'])
++		- to re-compile:
++			$ python setup.py py2exe
+ """
+ 
+-
+ import os as _os
+ import sys as _sys
+ import random as _rand
+@@ -129,27 +140,52 @@
+     Purpose:
+         Iterate through the directory and process files
+     """
+-    ffind = _wf.FindFilesIterator(_path + "\\" + "*")
+-    for fstep in ffind:
+-        # Parse file information
+-        (attr, ctime, atime, wtime, size_hi, size_lo, r0, r1, longname, shortname ) = fstep
+-        # Skip . and .. directories
+-        if longname == "." or longname == "..":
+-            continue
+-        # Test if file is a directory
+-        if _os.path.isdir(_path + "\\" + longname):
+-            # Recursion On?
+-            if prefs['drecur']:
+-                file_iter(_path + "\\" + longname + "\\", prefs)
+-            continue
+-        print "Checking: %s%s" % (_path, longname)
+-        # Proess file 
+-        if prefs['ftest']:
+-            # against Yara Rules
+-            ytest(_path + "\\" + longname, prefs)
+-        else:
+-            # against ssdeep
+-            stest(_path + "\\" + longname,prefs)
++    if prefs['sfile'] == "":	
++        ffind = _wf.FindFilesIterator(_path + "\\" + "*")
++        for fstep in ffind:
++            # Parse file information
++            (attr, ctime, atime, wtime, size_hi, size_lo, r0, r1, longname, shortname ) = fstep
++            # Skip . and .. directories
++            if longname == "." or longname == "..":
++                continue
++            # Test if file is a directory
++            if _os.path.isdir(_path + "\\" + longname):
++                # Recursion On?
++                if prefs['drecur']:
++                    try:
++                        file_iter(_path + "\\" + longname + "\\", prefs)
++                        continue
++                    except Exception:
++                        print "[!] ERROR: can\'t open \"%s\"" % (_path + "\\" + longname)
++		    # skip empty files or it will spit up errors
++            try:
++                if _os.stat(_path + "\\" + longname)[6]==0:
++		            continue
++            except Exception:
++                print "[!] ERROR: can\'t open \"%s\"" % (_path + "\\" + longname)
++        # Process file 
++        if prefs['ftest'] == 1:
++            try:
++                # against Yara Rules
++                ytest(_path + "\\" + longname, prefs)
++            except Exception:
++                print "[!] ERROR: can\'t open \"%s\"" % (_path + "\\" + longname)
++        if prefs['ftest'] == 0:
++            try:
++                # against ssdeep
++                stest(_path + "\\" + longname,prefs)
++            except Exception:
++                print "[!] ERROR: can\'t open \"%s\"" % (_path + "\\" + longname)
++				
++def file_scan(_path, prefs):
++	if _os.path.abspath(prefs['sfile']):
++        # Process file 
++            if prefs['ftest'] == 1:
++                try:
++                    # against Yara Rules
++                    ytest(_path, prefs)
++                except Exception:
++                    print "[!] ERROR: can\'t open \"%s\"" % (_path)
+ 
+ def ytest(_ypath, prefs):
+     """
+@@ -160,15 +196,13 @@
+             prefs['yrule'] = compiled class from the rule file to test with
+     """
+     # Test file against Yara Rules
+-    ymatch = prefs['yrule'].matchfile(_ypath)
++    ymatch = prefs['yrule'].match(_ypath)
+     if len(ymatch):
+         # Process alerts
+         for ypos in ymatch:
+-            print "    Alert: %s" % ypos
++            print "[-] Hit: %s \n\t[*] %s" % (ypos,_ypath)
+         if prefs['scopy']:
+             storefile(_ypath, prefs)
+-        if prefs['sdel']:
+-            delfile(_ypath)
+ 
+ def stest(_ypath, prefs):
+     """
+@@ -183,42 +217,27 @@
+             prefs['samp_file'] = sample file to compare ssDeep hashes against
+             prefs['ssScore'] = ssDeep comparison score to alert on
+             prefs['scopy'] = determine if alert generating files should be copied to a storage location
+-            prefs['sdel'] = determine if alert generating files should be deleted
+     """
+     sshash = create_string_buffer('\000' * 256)
+     fn = create_string_buffer(_ypath)
+-    
++
+     # Check sample file and store sshash so it is only computed once
+     if len(repr(prefs['samp_hash'].value)) == 2:
+         hstat = prefs['fuzz'].fuzzy_hash_filename(prefs['samp_file'], prefs['samp_hash'])
+         print "Sample File Hash: %s" % repr(prefs['samp_hash'].value)
+         # exit if the attempted to hash fails
+         if hstat:
+-            print "%s: Problem hashing sample file - %s" % (prefs['progname'], repr(prefs['samp_file'].value))
++            print "[!] ERROR: Problem hashing sample file - %s" % (repr(prefs['samp_file'].value))
+             _sys.exit()
+     # sshash the test file
+     hstat = prefs['fuzz'].fuzzy_hash_filename(fn, sshash)
+     if not hstat:
+         # compare file sshashes
+         hcmp = prefs['fuzz'].fuzzy_compare(sshash,prefs['samp_hash'])
+-        # transform c type value to py type value
+-        #phcmp = repr(hcmp.value)
+-        # if files are greater than 50 percent (default) alike then print out results.
+         if hcmp > prefs['ssScore']:
+-            print "    Alert: %s scored %s" % (_os.path.basename(_ypath),hcmp)  
++            print "\t[-] Hit: \"%s\" scored '%s'" % (_os.path.basename(_ypath),hcmp)  
+             if prefs['scopy']:
+                 storefile(_ypath, prefs)
+-            if prefs['sdel']:
+-                delfile(_ypath)
+-            
+-def nowarranty():
+-    print "There is no warrenty for this program.  User at your own risk and only with permission."
+-    print "If you use the deletion option you may damage your system, programs or applications."
+-    print "Enter YES to indicate you have read and understand this warning and with to proceed."
+-    answer = userinput()
+-    if answer != "YES":
+-        _sys.exit()
+-    
+ 
+ def userinput():
+     useraccept = raw_input("-> ")
+@@ -235,43 +254,23 @@
+     Purpose:
+         Copy alert generating files
+     """
+-    nfile = prefs['stordir'] + "\\" + _os.path.basename(_ypath)
++    nfile = prefs['stordir'] + "\\" + _os.path.basename(_ypath) 
+     if _os.path.isfile(nfile):
+         # if file exists in storage location then add a random number to the end of it and test again so as to not overwrite files with similar names
+         randext = str(_rand.randint(0,99999))
+         if _os.path.isfile(nfile + "." + randext):
+             storefile(_ypath, prefs)
+         else:
+-            print "    Copying %s to storage directory." % (nfile + "." + randext)
++            print "\t[-] File exists, copying as \"%s\"" % (_os.path.basename(_ypath) + "." + randext)
+             _wf.CopyFile(_ypath, nfile + "." + randext, 1)
+             # Set to Read-Only
+             _wf.SetFileAttributes(nfile + "." + randext, 1)
+     else:
+-        print "    Copying %s to storage directory." % nfile
++        print "\t[-] Copying \"%s\"" % nfile
+         _wf.CopyFile(_ypath, nfile, 1)
+         # Set to Read-Only
+         _wf.SetFileAttributes(nfile, 1)
+     
+-def delfile(_ypath):
+-    """
+-    Function: storefile
+-    Variables
+-        _ypath = a path to the directory and remote system to test files
+-
+-    Purpose:
+-        Delete alert generating files
+-    """
+-    try:
+-        _wf.DeleteFile(_ypath)
+-    except:
+-        # some files cannot be deleted because of permission
+-        pass
+-    # let the user know if deletion was successful or not
+-    if _os.path.isfile(_ypath):
+-        print "    Could not delete file: %s" % _ypath
+-    else:
+-        print "    Deleted file: %s" % _ypath
+-    
+ def help():
+     """
+     Function: help
+@@ -281,25 +280,18 @@
+     Purpose:
+         Print help output to stdout
+     """
+-
+-    print "Scout Sniper release: %s" % __release__
+-    print "Author: Don C. Weber"
+-    print ""
+-    print "usage:   ./scoutsniper.py [-h|--help] [-V|--version] [-y| -Y yara rule file] [-s sample file]"
++    print "usage:   ./scoutsniper.py [-h|--help] [-V|--version] [-y yara rule file] [-s sample file]"
+     print "                   [-S int] [-r remote_host(s)] [-u username] [-p passwd] "
+-    print "                   [-c storage_directory] [-k] [-m] [-R] -d <search_directory>"
++    print "                   [-c storage_directory] [-f file] [-R] -d <search_directory>"
+     print ""
+     print "    -h | --help:     Print this help."
+     print "    -V | --version:  Version information."
+-    print "    -y:              Perform Yara Scan. Using default rule location '.\yara_rules\yara_rules.yr'."
+-    print "    -Y:              Perform Yara Scan. Using the Yara Rule File location provided."
+-    print "    -s:              Perform ssdeep Scan. Input is the path to a sample file to use."
+-    print "                     ssDeep functionality requires the Fuzzy Dll file from the ssDeep Windows"
+-    print "                     binary.  The Dll file can be obtained from http://ssdeep.sourceforge.net/."
+-    print "                     The fuzzy.dll file should be located in the same directory as this script"
+-    print "                     or executable."
++    print "    -y:              Perform Yara Scan. Using the Yara Rule File location provided."
++    print "    -s:              Perform ssdeep Scan (default match 90). Input is the path to a sample file to use."
++    print "                     The fuzzy.dll file should be located in the same directory as this file"
+     print "    -S:              The lowest score to use when alerting on like files. An integer between 1 - 100"
+-    print "    -d:              The directory to search.  This option is required."
++    print "    -d:              The directory to search"
++    print "    -f:              The single file to scan"
+     print "    -r:              The remote host(s) to search.  Can be a single IP Address/Hostname or"
+     print "                     multiple IP Addresses/Hostnames in a comma separated list with no spaces."
+     print "    -u:              Username for the account to access remote systems."
+@@ -309,16 +301,8 @@
+     print "                     This information may end up in command line history files and"
+     print "                     be passed in clear text depending on system configurations."
+     print "    -c:              Copy files that generate alerts.  It requires a storage location."
+-    print "                     This option is in development and not enabled."
+-    print "    -k:              Delete files that generate alerts."
+-    print "                     This option is in development and not enabled."
+-    print "    -m:              Search memory."
+-    print "                     This option is in development and not enabled."
+     print "    -R:              Search all sub-directories."
+-    print "    -W:              Skip warning message.  Using this options demonstrates that the user"
+-    print "                     accepts the program warning and that using the delete functionality"
+-    print "                     damage the system, programs, and applications."
+-    
++
+ def ytime():
+     """
+     Function: help
+@@ -351,7 +335,7 @@
+ # Common Preferences
+ prefs = {
+     'progname': _os.path.basename(_sys.argv[0]), # Program name
+-    'yr_file' : _os.path.abspath("yara_rules\\yara_rules.yr"), # yara rule file
++    'yr_file' : "", # yara rule file
+     'remhost' : [],             # List of remote hosts
+     'remuser' : "",             # User name for remote access
+     'rempass' : "",             # User password for remote access
+@@ -361,12 +345,13 @@
+     'fuzz' : cdll.fuzzy,         # ssdeep object
+     'samp_file' : create_string_buffer('\000' * 256),            # File to generation ssdeep hash for comparision
+     'samp_hash' : create_string_buffer('\000' * 256),            # c string for storing hash value returned by ssdeep functions
+-    'ssScore' : 50,              # minimum ssdeep score to match
++    'ssScore' : 90,              # minimum ssdeep score to match
+     'ftest' : 0,                 # 0 == ssdeep, 1 == yara
+     'swarn' : 1,                 # 0 == print warning, 1 == skip warning
+     'stordir' : "",
+     'scopy' : 0,                  # 0 == do not copy, 1 == copy
+-    'sdel' : 0                  # 0 == do not delete, 1 == delete
++    'sdel' : 0,                  # 0 == do not delete, 1 == delete
++	'sfile' : ""				# single file to scan
+ }    
+ 
+ # Other variables
+@@ -374,12 +359,16 @@
+ 
+ # Get program options
+ try:
+-    opts, args = _getopt.getopt(_sys.argv[1:], "hVr:u:p:d:yY:s:S:kc:mRW",["help","version"])
++    opts, args = _getopt.getopt(_sys.argv[1:], "hVr:u:p:f:d:y:s:S:kc:mR",["help","version"])
+ except _getopt.GetoptError:
+     # Program help
+-    print "%s: command line error" % prefs['progname']
++    print "[!] ERROR: Did you provide the right command line options?"
+     help()
+     _sys.exit(1)
++
++# Start time
++print "[+] Start Time: %s" % ytime()
++
+ for opt, arg in opts:    
+     if opt in ("-h", "--help"):
+         help()
+@@ -399,16 +388,14 @@
+     elif opt in ("-d"):
+         # Directory path to search
+         sdir = _os.path.abspath(arg)
+-        print "sdir: %s" % sdir
+-    elif opt in ("-y"):
+-        # Default Yara Rule File Location
+-        prefs['ftest'] = 1                 
+-        # Parse Yara Rule Files
+-        if not _os.path.isfile(prefs['yr_file']):
+-            print "%s: Could not find Yara Rule file: %s" % (prefs['progname'], prefs['yr_file'])
++        print "[+] Searching: %s" % sdir    
++    elif opt in ("-f"):
++        if not _os.path.isfile(arg):
++            print "[!] ERROR: Couldn't find the specified file"
+             _sys.exit()
+-        yrule = _yara.compile(prefs['yr_file'])    
+-    elif opt in ("-Y"):
++        prefs['sfile'] = _os.path.abspath(arg)
++        print "[+] Scanning: %s" % (prefs['sfile'])
++    elif opt in ("-y"):
+         # New Yara Rule File Location
+         if not _os.path.isfile(arg):
+             print "%s: Could not find Yara Rule file: %s" % (prefs['progname'], arg)
+@@ -424,7 +411,6 @@
+         # Sample File Location
+         if not _os.path.isfile(prefs['fuzz_file']):
+             print "%s: Could not find ssDeep Fuzzy DLL file: %s" % (prefs['progname'], prefs['fuzz_file'])
+-            print "You may obtain the fuzzy.dll file from the ssDeep Windows binary download: http://ssdeep.sourceforge.net/"
+             print "The fuzzy.dll file should be located in the same directory as this script or executable."
+             _sys.exit()
+         if not _os.path.isfile(arg):
+@@ -435,57 +421,49 @@
+     elif opt in ("-S"):
+         # Set minimum ssdeep score to generate alert
+         prefs['ssScore'] = int(arg)
+-    elif opt in ("-k"):  
+-        prefs['sdel'] = 1   # turn on delete file
+     elif opt in ("-c"):    
+         prefs['scopy'] = 1  # turn on file copy
+         prefs['stordir'] = arg
++        print "[+] Storage directory set to: \"%s\"" % (_os.path.abspath(arg))
+         if not _os.path.isdir(arg):
+             _wf.CreateDirectory(_os.path.abspath(arg),None)
+             if not _os.path.isdir(arg):
+-                print "%s: Could not create storage directory: %s" % (prefs['progname'], _os.path.abspath(arg))
++                print "[!] ERROR: Could not create storage directory: \"%s\"" % (_os.path.abspath(arg))
+                 _sys.exit()
+-    elif opt in ("-m"):
+-        print "%s: Memory scanning option has not been implemented." % prefs['progname']
+-        _sys.exit()
+     elif opt in ("-R"):
+         # Recursive searching enabled
+         prefs['drecur'] = 1
+-    elif opt in ("-W"):
+-        # Warning disabled
+-        prefs['swarn'] = 0
+     else:
+         print "%s: Detected unrecognized command line argument." % prefs['progname']
+         help()
+         _sys.exit(1)
+ 
+-# Test for path
+-if sdir == "":
+-    print "%s: No search directory provided." % prefs['progname']
++# Test for directory or single file to scan
++if sdir == "" and prefs['sfile'] == "":
++    print "[!] ERROR: Nothing was provided to scan..."
+     help()
+     _sys.exit()
+ 
+-# Ensure that the user has been warned
+-if prefs['swarn']:
+-    nowarranty()
+-    
+-print "Scout Sniper: Happy Hunting"
+-
+-# Start time
+-print "Start Time: %s" % ytime()
+-
++# If YARA wasn't selected and a single file is given exit
++if (prefs['ftest']) == 0 and prefs['sfile']:
++    print "[!] ERROR: ssdeep needs a directory to scan against"
++    help()
++    _sys.exit()
++	
+ host_len = len(prefs['remhost'])
+ if not host_len:
+     # Search a local directory
+-    print "\nSearching Local: %s" % (sdir)
+-    if not _os.path.isdir(sdir):
+-        print "%s: Search path provided is not a directory: %s" % (prefs['progname'], sdir)
+-        _sys.exit()
+-    file_iter(sdir, prefs)
++    if prefs['sfile'] == "":
++        if not _os.path.isdir(sdir):
++            print "[!] ERROR: The search path provided is not a directory"
++            _sys.exit()
++        file_iter(sdir, prefs)
++    else:
++        file_scan(prefs['sfile'], prefs)
+ else:   
+     # Test for username and password if provided a remote host
+     if prefs['remuser'] == "" or prefs['rempass'] == "":
+-        print "%s: No username or password provided for remote host(s)." % prefs['progname']
++        print "[!] ERROR: No username or password provided for remote host(s)"
+         help()
+         _sys.exit()
+     # Search a remote directory
+@@ -500,7 +478,5 @@
+         print ""
+ 
+ # Finish time
+-print "Finish Time: %s" % ytime()
++print "[+] Finish Time: %s" % ytime()
+     
+-print "Scout Sniper Done"
+-    
+\ No newline at end of file
