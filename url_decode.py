@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 '''
 This script takes a line or file and decodes the HTML encoded values - if after the HTML decoding
-there is a match for character substitution then it coverts them to their character representation.
+there is a match for character substitution then it coverts them to their character representation 
+as well as a check for basic Base64 encoding.
 
 From:
 "/some/sites/page%29%20AND%202=%28SELECT%20UPPER%28
@@ -24,13 +25,14 @@ To:
 # url_decode.py was created by Glenn P. Edwards Jr.
 #	 	http://hiddenillusion.blogspot.com
 # 				@hiddenillusion
-# Version 0.1
-# Date: 12-07-2012
+# Version 0.2
+# Date: 12-10-2012
 
 import os
 import sys
 import re
 import urllib as ul
+import base64
 
 def main():
     # Get program args
@@ -40,13 +42,26 @@ def main():
     else:
         input = sys.argv[1]
         chr_regex = re.compile('CHR\\((\\d+)\\)')
+        b64_regex = re.compile('(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$')
 
-    def pretty(line):
+	def pretty(line):
+        """
+        Performing/returning this on every line regardless just to provide what it looks like decoded
+        & because once it's decoded it may match another encoding scheme which then needs to be decoded.
+        """
         return ul.unquote_plus(line)
 
     def chr_replace(match):
         char_number = match.group(1)
         return (chr(int(char_number)))
+
+    def html_chr_decode(line):
+        return chr_regex.sub(chr_replace, line)
+
+    def html_b64_decode(line):
+        # lazy little validator to try and at least strip off characters to valid beginning of Base64 so it can be decoded properly
+        b64_cleaner = re.sub('^[^A-Za-z0-9+]*', '', line)
+        return base64.b64decode(b64_cleaner)
 
     # Verify supplied path exists or die
     if os.path.isfile(input):
@@ -66,18 +81,26 @@ def main():
                         if re.search(chr_regex, pretty(line)):
                             print "[-] HTML & CHR values Decoded version:"
                             print chr_regex.sub(chr_replace, pretty(line))
+                        if re.search(b64_regex, pretty(line)):
+                            print "[-] HTML & Base64 Decoded version:"
+                            print html_b64_decode(pretty(line))
                         c += 1
     else:
         """
         This is meant to be used if a single line is just passed/pasted to this script so not
-        keeping track of empty lines or line count.
+        keeping track of empty lines or line count
         """
+        print
         print "[-] HTML Decoded version:"
         print pretty(input)
         if re.search(chr_regex, pretty(input)):
             print
             print "[-] HTML & CHR values Decoded version:"
-            print chr_regex.sub(chr_replace, pretty(input))
+            print html_chr_decode(pretty(input))
+        if re.search(b64_regex, pretty(input)):
+            print
+            print "[-] HTML & Base64 Decoded version:"
+            print html_b64_decode(pretty(input))
 
 if __name__ == "__main__":
     main()
