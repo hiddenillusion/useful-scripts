@@ -25,7 +25,7 @@ To:
 # url_decode.py was created by Glenn P. Edwards Jr.
 #	 	http://hiddenillusion.blogspot.com
 # 				@hiddenillusion
-# Version 0.2
+# Version 0.2.1
 # Date: 12-10-2012
 
 import os
@@ -44,7 +44,7 @@ def main():
         chr_regex = re.compile('CHR\\((\\d+)\\)')
         b64_regex = re.compile('(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$')
 
-	def pretty(line):
+    def pretty(line):
         """
         Performing/returning this on every line regardless just to provide what it looks like decoded
         & because once it's decoded it may match another encoding scheme which then needs to be decoded.
@@ -80,10 +80,17 @@ def main():
                         print pretty(line)
                         if re.search(chr_regex, pretty(line)):
                             print "[-] HTML & CHR values Decoded version:"
-                            print chr_regex.sub(chr_replace, pretty(line))
+                            try:
+                            try:
+                                print chr_regex.sub(chr_replace, pretty(line))
+                            except Exception, msg:
+                                print "[!] ERROR:",msg
                         if re.search(b64_regex, pretty(line)):
                             print "[-] HTML & Base64 Decoded version:"
-                            print html_b64_decode(pretty(line))
+                            try:
+                                print html_b64_decode(pretty(line))
+                            except Exception, msg:
+                                print "[!] ERROR:",msg
                         c += 1
     else:
         """
@@ -96,11 +103,17 @@ def main():
         if re.search(chr_regex, pretty(input)):
             print
             print "[-] HTML & CHR values Decoded version:"
-            print html_chr_decode(pretty(input))
+            try:
+                print html_chr_decode(pretty(input))
+            except Exception, msg:
+                print "[!] ERROR:",msg
         if re.search(b64_regex, pretty(input)):
             print
             print "[-] HTML & Base64 Decoded version:"
-            print html_b64_decode(pretty(input))
+            try:
+                print html_b64_decode(pretty(input))
+            except Exception, msg:
+                print "[!] ERROR:",msg
 
 if __name__ == "__main__":
     main()
