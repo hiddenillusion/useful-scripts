@@ -81,7 +81,6 @@ def main():
                         if re.search(chr_regex, pretty(line)):
                             print "[-] HTML & CHR values Decoded version:"
                             try:
-                            try:
                                 print chr_regex.sub(chr_replace, pretty(line))
                             except Exception, msg:
                                 print "[!] ERROR:",msg
